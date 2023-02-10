@@ -254,3 +254,9 @@ public class RowWiseConversionExample {
     }
 }
 ```
+
+### The `SubstraitExample.java` source file
+```java
+
+```
+

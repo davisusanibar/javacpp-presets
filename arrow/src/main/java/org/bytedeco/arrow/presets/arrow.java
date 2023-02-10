@@ -45,8 +45,8 @@ import org.bytedeco.javacpp.tools.InfoMapper;
             compiler = "cpp17",
             define = {"NO_WINDOWS_H", "UNIQUE_PTR_NAMESPACE std", "SHARED_PTR_NAMESPACE std"},
             include = {
-//                "arrow/engine/substrait/util.h",
-//                "arrow/engine/substrait/type_fwd.h",
+                "arrow/engine/substrait/util.h",
+                "arrow/engine/substrait/type_fwd.h",
                 "arrow/api.h",
                 "arrow/util/config.h",
                 "arrow/util/checked_cast.h",

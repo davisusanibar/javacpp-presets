@@ -1,45 +1,293 @@
-diff -ruN -a apache-arrow-5.0.0/cpp/cmake_modules/ThirdpartyToolchain.cmake apache-arrow-5.0.0-patch/cpp/cmake_modules/ThirdpartyToolchain.cmake
---- apache-arrow-5.0.0/cpp/cmake_modules/ThirdpartyToolchain.cmake	2021-07-22 21:40:24.000000000 +0900
-+++ apache-arrow-5.0.0-patch/cpp/cmake_modules/ThirdpartyToolchain.cmake	2021-08-12 22:51:49.430865500 +0900
-@@ -1108,6 +1108,7 @@
-   set(GLOG_CMAKE_ARGS
-       ${EP_COMMON_CMAKE_ARGS}
-       "-DCMAKE_INSTALL_PREFIX=${GLOG_BUILD_DIR}"
-+      -DCMAKE_INSTALL_LIBDIR=lib
-       -DBUILD_SHARED_LIBS=OFF
-       -DBUILD_TESTING=OFF
-       -DWITH_GFLAGS=OFF
-diff -ruN -a apache-arrow-5.0.0/cpp/src/arrow/compute/kernel.h apache-arrow-5.0.0-patch/cpp/src/arrow/compute/kernel.h
---- apache-arrow-5.0.0/cpp/src/arrow/compute/kernel.h	2021-07-22 21:40:24.000000000 +0900
-+++ apache-arrow-5.0.0-patch/cpp/src/arrow/compute/kernel.h	2021-08-12 22:51:49.446989100 +0900
-@@ -608,7 +608,7 @@
+diff --git apache-arrow-11.0.0/cpp/src/arrow/compute/exec/expression.cc b/cpp/src/arrow/compute/exec/expression.cc
+index 0dd1a0b9a..4f3dfdd7a 100644
+--- a/cpp/src/arrow/compute/exec/expression.cc
++++ b/cpp/src/arrow/compute/exec/expression.cc
+@@ -438,12 +438,11 @@ Result<Expression> BindImpl(Expression expr, const TypeOrSchema& in,
+   if (const FieldRef* ref = expr.field_ref()) {
+     ARROW_ASSIGN_OR_RAISE(FieldPath path, ref->FindOne(in));
+
+-    Expression::Parameter param = *expr.parameter();
+-    param.indices.resize(path.indices().size());
+-    std::copy(path.indices().begin(), path.indices().end(), param.indices.begin());
++    auto bound = *expr.parameter();
++    bound.index = path[0];
+     ARROW_ASSIGN_OR_RAISE(auto field, path.Get(in));
+-    param.type = field->type();
+-    return Expression{std::move(param)};
++    bound.descr.type = field->type();
++    return Expression{std::move(bound)};
+   }
+
+   auto call = *CallNotNull(expr);
+diff --git apache-arrow-11.0.0/cpp/src/arrow/compute/exec/expression.h b/cpp/src/arrow/compute/exec/expression.h
+index c9c7b0e60..ea270c45a 100644
+--- a/cpp/src/arrow/compute/exec/expression.h
++++ b/cpp/src/arrow/compute/exec/expression.h
+@@ -119,7 +119,7 @@ class ARROW_EXPORT Expression {
+
+     // post-bind properties
+     TypeHolder type;
+-    ::arrow::internal::SmallVector<int, 2> indices;
++    int index;
+   };
+   const Parameter* parameter() const;
+
+diff --git apache-arrow-11.0.0/cpp/src/arrow/compute/exec/query_context.h b/cpp/src/arrow/compute/exec/query_context.h
+index 12ddbc56f..f3913daac 100644
+--- a/cpp/src/arrow/compute/exec/query_context.h
++++ b/cpp/src/arrow/compute/exec/query_context.h
+@@ -119,7 +119,7 @@ class ARROW_EXPORT QueryContext {
+   // This is an RAII class for keeping track of in-flight file IO. Useful for getting
+   // an estimate of memory use, and how much memory we expect to be freed soon.
+   // Returned by ReportTempFileIO.
+-  struct [[nodiscard]] TempFileIOMark {
++  struct TempFileIOMark {
+     QueryContext* ctx_;
+     size_t bytes_;
+
+diff --git apache-arrow-11.0.0/cpp/src/arrow/json/reader.cc b/cpp/src/arrow/json/reader.cc
+index dae06d5bf..7a4db4da4 100644
+--- a/cpp/src/arrow/json/reader.cc
++++ b/cpp/src/arrow/json/reader.cc
+@@ -123,10 +123,10 @@ class DecodeContext {
+     SetSchema(std::move(explicit_schema), unexpected_field_behavior);
+   }
+
+-  [[nodiscard]] MemoryPool* pool() const { return pool_; }
+-  [[nodiscard]] const ParseOptions& parse_options() const { return parse_options_; }
+-  [[nodiscard]] const PromotionGraph* promotion_graph() const { return promotion_graph_; }
+-  [[nodiscard]] const std::shared_ptr<DataType>& conversion_type() const {
++  MemoryPool* pool() const { return pool_; }
++  const ParseOptions& parse_options() const { return parse_options_; }
++  const PromotionGraph* promotion_graph() const { return promotion_graph_; }
++  const std::shared_ptr<DataType>& conversion_type() const {
+     return conversion_type_;
+   }
+
+@@ -444,7 +444,7 @@ class StreamingReaderImpl : public StreamingReader {
+         });
+   }
+
+-  [[nodiscard]] std::shared_ptr<Schema> schema() const override { return schema_; }
++  std::shared_ptr<Schema> schema() const override { return schema_; }
+
+   Status ReadNext(std::shared_ptr<RecordBatch>* out) override {
+     auto result = ReadNextAsync().result();
+@@ -461,7 +461,7 @@ class StreamingReaderImpl : public StreamingReader {
+     return generator_();
+   }
+
+-  [[nodiscard]] int64_t bytes_processed() const override {
++  int64_t bytes_processed() const override {
+     return bytes_processed_->load();
+   }
+
+diff --git apache-arrow-11.0.0/cpp/src/arrow/json/reader.h b/cpp/src/arrow/json/reader.h
+index 7776cb0b7..75cabe708 100644
+--- a/cpp/src/arrow/json/reader.h
++++ b/cpp/src/arrow/json/reader.h
+@@ -81,7 +81,7 @@ class ARROW_EXPORT StreamingReader : public RecordBatchReader {
+
+   /// Get the number of bytes which have been succesfully converted to record batches
+   /// and consumed
+-  [[nodiscard]] virtual int64_t bytes_processed() const = 0;
++  virtual int64_t bytes_processed() const = 0;
+
+   /// \brief Create a `StreamingReader` from an `InputStream`
+   /// Blocks until the initial batch is loaded
+diff --git apache-arrow-11.0.0/cpp/src/arrow/result.h b/cpp/src/arrow/result.h
+index 30e632c70..39523c357 100644
+--- a/cpp/src/arrow/result.h
++++ b/cpp/src/arrow/result.h
+@@ -94,7 +94,7 @@ ARROW_EXPORT void InvalidValueOrDie(const Status& st);
+ ///   arrow::Result<int> CalculateFoo();
+ /// ```
+ template <class T>
+-class [[nodiscard]] Result : public util::EqualityComparable<Result<T>> {
++class Result : public util::EqualityComparable<Result<T>> {
+   template <typename U>
+   friend class Result;
+
+diff --git apache-arrow-11.0.0/cpp/src/arrow/status.h b/cpp/src/arrow/status.h
+index 1b9ba2863..60a766404 100644
+--- a/cpp/src/arrow/status.h
++++ b/cpp/src/arrow/status.h
+@@ -129,7 +129,7 @@ class ARROW_EXPORT StatusDetail {
+ ///
+ /// Additionally, if an error occurred, a specific error message is generally
+ /// attached.
+-class ARROW_EXPORT [[nodiscard]] Status : public util::EqualityComparable<Status>,
++class ARROW_EXPORT Status : public util::EqualityComparable<Status>,
+                                           public util::ToStringOstreamable<Status> {
+  public:
+   // Create a success status.
+diff --git apache-arrow-11.0.0/cpp/src/arrow/util/future.h b/cpp/src/arrow/util/future.h
+index 17c641c31..613eeaf94 100644
+--- a/cpp/src/arrow/util/future.h
++++ b/cpp/src/arrow/util/future.h
+@@ -315,7 +315,7 @@ class ARROW_EXPORT FutureImpl : public std::enable_shared_from_this<FutureImpl>
+ /// The consumer API allows querying a Future's current state, wait for it
+ /// to complete, and composing futures with callbacks.
+ template <typename T>
+-class [[nodiscard]] Future {
++class Future {
+  public:
+   using ValueType = T;
+   using SyncType = typename detail::SyncType<T>::type;
+diff --git apache-arrow-11.0.0/cpp/src/arrow/compute/exec/expression.cc b/cpp/src/arrow/compute/exec/expression.cc
+index 0dd1a0b9a..4f3dfdd7a 100644
+--- a/cpp/src/arrow/compute/exec/expression.cc
++++ b/cpp/src/arrow/compute/exec/expression.cc
+@@ -438,12 +438,11 @@ Result<Expression> BindImpl(Expression expr, const TypeOrSchema& in,
+   if (const FieldRef* ref = expr.field_ref()) {
+     ARROW_ASSIGN_OR_RAISE(FieldPath path, ref->FindOne(in));
+ 
+-    Expression::Parameter param = *expr.parameter();
+-    param.indices.resize(path.indices().size());
+-    std::copy(path.indices().begin(), path.indices().end(), param.indices.begin());
++    auto bound = *expr.parameter();
++    bound.index = path[0];
+     ARROW_ASSIGN_OR_RAISE(auto field, path.Get(in));
+-    param.type = field->type();
+-    return Expression{std::move(param)};
++    bound.descr.type = field->type();
++    return Expression{std::move(bound)};
+   }
+ 
+   auto call = *CallNotNull(expr);
+diff --git apache-arrow-11.0.0/cpp/src/arrow/compute/exec/expression.h b/cpp/src/arrow/compute/exec/expression.h
+index c9c7b0e60..ea270c45a 100644
+--- a/cpp/src/arrow/compute/exec/expression.h
++++ b/cpp/src/arrow/compute/exec/expression.h
+@@ -119,7 +119,7 @@ class ARROW_EXPORT Expression {
+ 
+     // post-bind properties
+     TypeHolder type;
+-    ::arrow::internal::SmallVector<int, 2> indices;
++    int index;
+   };
+   const Parameter* parameter() const;
+ 
+diff --git apache-arrow-11.0.0/cpp/src/arrow/compute/exec/query_context.h b/cpp/src/arrow/compute/exec/query_context.h
+index 12ddbc56f..f3913daac 100644
+--- a/cpp/src/arrow/compute/exec/query_context.h
++++ b/cpp/src/arrow/compute/exec/query_context.h
+@@ -119,7 +119,7 @@ class ARROW_EXPORT QueryContext {
+   // This is an RAII class for keeping track of in-flight file IO. Useful for getting
+   // an estimate of memory use, and how much memory we expect to be freed soon.
+   // Returned by ReportTempFileIO.
+-  struct [[nodiscard]] TempFileIOMark {
++  struct TempFileIOMark {
+     QueryContext* ctx_;
+     size_t bytes_;
+ 
+diff --git apache-arrow-11.0.0/cpp/src/arrow/compute/kernel.h b/cpp/src/arrow/compute/kernel.h
+index d8960308d..921dba08c 100644
+--- a/cpp/src/arrow/compute/kernel.h
++++ b/cpp/src/arrow/compute/kernel.h
+@@ -559,7 +559,7 @@ struct VectorKernel : public Kernel {
          finalize(std::move(finalize)) {}
  
    VectorKernel(std::shared_ptr<KernelSignature> sig, ArrayKernelExec exec,
--               KernelInit init = NULLPTR, VectorFinalize finalize = NULLPTR)
-+               KernelInit init, VectorFinalize finalize = NULLPTR)
-       : ArrayKernel(std::move(sig), std::move(exec), std::move(init)),
+-               KernelInit init = NULLPTR, FinalizeFunc finalize = NULLPTR)
++               KernelInit init, FinalizeFunc finalize = NULLPTR)
+       : Kernel(std::move(sig), std::move(init)),
+         exec(exec),
          finalize(std::move(finalize)) {}
+diff --git apache-arrow-11.0.0/cpp/src/arrow/json/reader.cc b/cpp/src/arrow/json/reader.cc
+index dae06d5bf..7a4db4da4 100644
+--- a/cpp/src/arrow/json/reader.cc
++++ b/cpp/src/arrow/json/reader.cc
+@@ -123,10 +123,10 @@ class DecodeContext {
+     SetSchema(std::move(explicit_schema), unexpected_field_behavior);
+   }
  
-diff -ruN -a apache-arrow-5.0.0/cpp/src/arrow/flight/client_header_internal.cc apache-arrow-5.0.0-patch/cpp/src/arrow/flight/client_header_internal.cc
---- apache-arrow-5.0.0/cpp/src/arrow/flight/client_header_internal.cc	2021-07-22 21:40:24.000000000 +0900
-+++ apache-arrow-5.0.0-patch/cpp/src/arrow/flight/client_header_internal.cc	2021-08-12 22:50:56.061107300 +0900
-@@ -18,10 +18,10 @@
- // Interfaces for defining middleware for Flight clients. Currently
- // experimental.
+-  [[nodiscard]] MemoryPool* pool() const { return pool_; }
+-  [[nodiscard]] const ParseOptions& parse_options() const { return parse_options_; }
+-  [[nodiscard]] const PromotionGraph* promotion_graph() const { return promotion_graph_; }
+-  [[nodiscard]] const std::shared_ptr<DataType>& conversion_type() const {
++  MemoryPool* pool() const { return pool_; }
++  const ParseOptions& parse_options() const { return parse_options_; }
++  const PromotionGraph* promotion_graph() const { return promotion_graph_; }
++  const std::shared_ptr<DataType>& conversion_type() const {
+     return conversion_type_;
+   }
  
-+#include "arrow/flight/platform.h"
- #include "arrow/flight/client_header_internal.h"
- #include "arrow/flight/client.h"
- #include "arrow/flight/client_auth.h"
--#include "arrow/flight/platform.h"
- #include "arrow/util/base64.h"
- #include "arrow/util/make_unique.h"
- #include "arrow/util/string.h"
-diff -ruN -a apache-arrow-5.0.0/cpp/src/arrow/vendored/datetime/date.h apache-arrow-5.0.0-patch/cpp/src/arrow/vendored/datetime/date.h
---- apache-arrow-5.0.0/cpp/src/arrow/vendored/datetime/date.h	2021-07-22 21:40:24.000000000 +0900
-+++ apache-arrow-5.0.0-patch/cpp/src/arrow/vendored/datetime/date.h	2021-08-12 22:51:49.446989100 +0900
-@@ -109,7 +109,7 @@
+@@ -444,7 +444,7 @@ class StreamingReaderImpl : public StreamingReader {
+         });
+   }
+ 
+-  [[nodiscard]] std::shared_ptr<Schema> schema() const override { return schema_; }
++  std::shared_ptr<Schema> schema() const override { return schema_; }
+ 
+   Status ReadNext(std::shared_ptr<RecordBatch>* out) override {
+     auto result = ReadNextAsync().result();
+@@ -461,7 +461,7 @@ class StreamingReaderImpl : public StreamingReader {
+     return generator_();
+   }
+ 
+-  [[nodiscard]] int64_t bytes_processed() const override {
++  int64_t bytes_processed() const override {
+     return bytes_processed_->load();
+   }
+ 
+diff --git apache-arrow-11.0.0/cpp/src/arrow/json/reader.h b/cpp/src/arrow/json/reader.h
+index 7776cb0b7..75cabe708 100644
+--- a/cpp/src/arrow/json/reader.h
++++ b/cpp/src/arrow/json/reader.h
+@@ -81,7 +81,7 @@ class ARROW_EXPORT StreamingReader : public RecordBatchReader {
+ 
+   /// Get the number of bytes which have been succesfully converted to record batches
+   /// and consumed
+-  [[nodiscard]] virtual int64_t bytes_processed() const = 0;
++  virtual int64_t bytes_processed() const = 0;
+ 
+   /// \brief Create a `StreamingReader` from an `InputStream`
+   /// Blocks until the initial batch is loaded
+diff --git apache-arrow-11.0.0/cpp/src/arrow/result.h b/cpp/src/arrow/result.h
+index 30e632c70..39523c357 100644
+--- a/cpp/src/arrow/result.h
++++ b/cpp/src/arrow/result.h
+@@ -94,7 +94,7 @@ ARROW_EXPORT void InvalidValueOrDie(const Status& st);
+ ///   arrow::Result<int> CalculateFoo();
+ /// ```
+ template <class T>
+-class [[nodiscard]] Result : public util::EqualityComparable<Result<T>> {
++class Result : public util::EqualityComparable<Result<T>> {
+   template <typename U>
+   friend class Result;
+ 
+diff --git apache-arrow-11.0.0/cpp/src/arrow/status.h b/cpp/src/arrow/status.h
+index 1b9ba2863..60a766404 100644
+--- a/cpp/src/arrow/status.h
++++ b/cpp/src/arrow/status.h
+@@ -129,7 +129,7 @@ class ARROW_EXPORT StatusDetail {
+ ///
+ /// Additionally, if an error occurred, a specific error message is generally
+ /// attached.
+-class ARROW_EXPORT [[nodiscard]] Status : public util::EqualityComparable<Status>,
++class ARROW_EXPORT Status : public util::EqualityComparable<Status>,
+                                           public util::ToStringOstreamable<Status> {
+  public:
+   // Create a success status.
+diff --git apache-arrow-11.0.0/cpp/src/arrow/util/future.h b/cpp/src/arrow/util/future.h
+index 17c641c31..613eeaf94 100644
+--- a/cpp/src/arrow/util/future.h
++++ b/cpp/src/arrow/util/future.h
+@@ -315,7 +315,7 @@ class ARROW_EXPORT FutureImpl : public std::enable_shared_from_this<FutureImpl>
+ /// The consumer API allows querying a Future's current state, wait for it
+ /// to complete, and composing futures with callbacks.
+ template <typename T>
+-class [[nodiscard]] Future {
++class Future {
+  public:
+   using ValueType = T;
+   using SyncType = typename detail::SyncType<T>::type;
+diff --git apache-arrow-11.0.0/cpp/src/arrow/vendored/datetime/date.h b/cpp/src/arrow/vendored/datetime/date.h
+index 3b38b263a..246115d20 100644
+--- a/cpp/src/arrow/vendored/datetime/date.h
++++ b/cpp/src/arrow/vendored/datetime/date.h
+@@ -107,7 +107,7 @@ namespace date
  #    define CONSTDATA const
  #    define CONSTCD11
  #    define CONSTCD14
